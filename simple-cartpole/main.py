@@ -99,7 +99,7 @@ def main():
     print_interval = 10
     score = 0.0
 
-    for n_epi in range(1, 10_001):
+    for n_epi in range(1, 3_001):
         epsilon = max(0.01, 0.08 - 0.01 * (n_epi / 200))
         obs, info = env.reset()
         done = False
@@ -124,6 +124,9 @@ def main():
             avg_score = score / print_interval
             print(f"n_epi: {n_epi}, avg_score: {avg_score:.2f}, n_buffer: {memory.size()}, eps: {epsilon:.3f}")
             score = 0.0
+
+    torch.save(q.state_dict(), "cartpole_dqn.pt")
+    print("Saved model -> cartpole_dqn.pt")
 
     env.close()
 
