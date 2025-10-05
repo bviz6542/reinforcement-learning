@@ -116,6 +116,21 @@ class MLPPolicySL(BasePolicy, nn.Module, metaclass=abc.ABCMeta):
         """
         torch.save(self.state_dict(), filepath)
 
+    def _to_tensor_obs(self, observation):
+        # unwrap (obs, info) or anything tuple-like
+        if isinstance(observation, tuple):
+            observation = observation[0]
+
+        # numpy -> torch
+        if isinstance(observation, np.ndarray):
+            observation = ptu.from_numpy(observation.astype(np.float32))
+
+        # 1D -> add batch
+        if observation.dim() == 1:
+            observation = observation.unsqueeze(0)
+
+        return observation
+
     def forward(self, observation: torch.FloatTensor) -> Any:
         """
         Defines the forward pass of the network
@@ -129,6 +144,12 @@ class MLPPolicySL(BasePolicy, nn.Module, metaclass=abc.ABCMeta):
         # through it. For example, you can return a torch.FloatTensor. You can also
         # return more flexible objects, such as a
         # `torch.distributions.Distribution` object. It's up to you!
+        observation = self._to_tensor_obs(observation)
+        mean = self.mean_net(observation)
+        std  = torch.exp(self.logstd).expand_as(mean)
+        base = distributions.Normal(mean, std)
+        dist = distributions.Independent(base, 1)
+        return dist
 
     def update(self, observations, actions):
         """
@@ -140,8 +161,20 @@ class MLPPolicySL(BasePolicy, nn.Module, metaclass=abc.ABCMeta):
             dict: 'Training Loss': supervised learning loss
         """
         # TODO: update the policy and return the loss
-        loss = TODO
+        actions = ptu.from_numpy(actions)
+        observations = ptu.from_numpy(observations)
+        dist = self.forward(observations)
+        loss = -dist.log_prob(actions).mean()
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
         return {
             # You can add extra logging information here, but keep this line
             'Training Loss': ptu.to_numpy(loss),
         }
+
+    @torch.no_grad()
+    def get_action(self, obs):
+        dist = self.forward(obs)
+        action = dist.sample()
+        return ptu.to_numpy(action.squeeze(0))
