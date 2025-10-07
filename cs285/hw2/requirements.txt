@@ -1,6 +1,8 @@
+numpy<2
 swig==4.0.2
 mujoco==2.2.0
-gym[box2d,classic_control]==0.25.2
+gym[classic_control]==0.25.2
+gym-notices==0.0.8
 tensorboard==2.10.0
 tensorboardX==2.5.1
 matplotlib==3.5.3
@@ -10,3 +12,4 @@ pyvirtualdisplay==3.0
 torch==1.13.1
 opencv-python==4.6.0.66
 ipdb==0.13.9
+box2d-py==2.3.8
