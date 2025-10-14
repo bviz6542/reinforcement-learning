@@ -9,9 +9,11 @@ import cs285.env_configs
 import os
 import time
 
+import numpy as np
+if not hasattr(np, "bool8"):  # NumPy 2.0 호환 shim
+    np.bool8 = np.bool_
 import gym
 from gym import wrappers
-import numpy as np
 import torch
 from cs285.infrastructure import pytorch_util as ptu
 import tqdm
@@ -36,7 +38,6 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
     render_env = config["make_env"](render=True)
 
     ep_len = config["ep_len"] or env.spec.max_episode_steps
-    batch_size = config["batch_size"] or batch_size
 
     discrete = isinstance(env.action_space, gym.spaces.Discrete)
     assert (
@@ -68,7 +69,7 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
             action = env.action_space.sample()
         else:
             # TODO(student): Select an action
-            action = ...
+            action = agent.get_action(observation)
 
         # Step the environment and add the data to the replay buffer
         next_observation, reward, done, info = env.step(action)
@@ -90,8 +91,21 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
         # Train the agent
         if step >= config["training_starts"]:
             # TODO(student): Sample a batch of config["batch_size"] transitions from the replay buffer
-            batch = ...
-            update_info = ...
+            batch = replay_buffer.sample(config["batch_size"])
+            batch = {k: ptu.from_numpy(v) for k, v in batch.items()}
+            done = batch["dones"]
+            if done.dtype == torch.bool:
+                done = done.float().view(-1)
+            else:
+                done = done.float().view(-1)
+            update_info = agent.update(
+                observations=batch["observations"],
+                actions=batch["actions"],
+                rewards=batch["rewards"].float().view(-1),
+                next_observations=batch["next_observations"],
+                dones=done,
+                step=step,
+            )
 
             # Logging
             update_info["actor_lr"] = agent.actor_lr_scheduler.get_last_lr()[0]
