@@ -8,8 +8,10 @@ from cs285.envs import Pointmass
 import os
 import time
 
-import gym
 import numpy as np
+if not hasattr(np, "bool8"):
+    np.bool8 = np.bool_
+import gym
 import torch
 from cs285.infrastructure import pytorch_util as ptu
 import tqdm
@@ -45,38 +47,84 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
     )
 
     ep_len = env.spec.max_episode_steps or env.max_episode_steps
-
-    observation = None
+    env_pointmass: Pointmass = env.unwrapped
 
     # Replay buffer
     replay_buffer = ReplayBuffer(capacity=config["total_steps"])
+
+    offline_rb = None
+    dataset_path = os.path.join(args.dataset_dir, f"{config['dataset_name']}.pkl")
+    if os.path.exists(dataset_path):
+        with open(dataset_path, "rb") as f:
+            offline_rb = pickle.load(f)
+        print(f"Loaded offline dataset from {dataset_path}")
+    else:
+        print(f"[WARN] Offline dataset not found at {dataset_path}. Running online-only after warmup.")
 
     observation = env.reset()
 
     recent_observations = []
 
     num_offline_steps = config["offline_steps"]
-    num_online_steps = config["total_steps"] - num_offline_steps
+    total_steps = config["total_steps"]
 
-    for step in tqdm.trange(config["total_steps"], dynamic_ncols=True):
-        # TODO(student): Borrow code from another online training script here. Only run the online training loop after `num_offline_steps` steps.
+    for step in tqdm.trange(total_steps, dynamic_ncols=True):
+        if step < num_offline_steps and offline_rb is not None:
+            # Main training loop
+            batch_np = offline_rb.sample(config["batch_size"])
 
-        # Main training loop
-        batch = replay_buffer.sample(config["batch_size"])
+            # Convert to PyTorch tensors
+            batch = ptu.from_numpy(batch_np)
 
-        # Convert to PyTorch tensors
-        batch = ptu.from_numpy(batch)
+            update_info = agent.update(
+                batch["observations"],
+                batch["actions"],
+                batch["rewards"] * (1 if config.get("use_reward", False) else 0),
+                batch["next_observations"],
+                batch["dones"],
+                step,
+            )
+            epsilon = None
 
-        update_info = agent.update(
-            batch["observations"],
-            batch["actions"],
-            batch["rewards"] * (1 if config.get("use_reward", False) else 0),
-            batch["next_observations"],
-            batch["dones"],
-            step,
-        )
+        else:
+            if exploration_schedule is not None:
+                epsilon = exploration_schedule.value(step - num_offline_steps)
+            else:
+                epsilon = 0.0
 
-        # Logging code
+            action = agent.get_action(observation, epsilon)
+
+            next_observation, reward, done, info = env.step(action)
+            next_observation = np.asarray(next_observation)
+            truncated = info.get("TimeLimit.truncated", False)
+
+            replay_buffer.insert(
+                observation=observation,
+                action=action,
+                reward=reward,
+                done=done and not truncated,
+                next_observation=next_observation,
+            )
+            recent_observations.append(observation)
+
+            if done:
+                logger.log_scalar(info["episode"]["r"], "train_return", step)
+                logger.log_scalar(info["episode"]["l"], "train_ep_len", step)
+                observation = env.reset()
+            else:
+                observation = next_observation
+
+            batch_np = replay_buffer.sample(config["batch_size"])
+            batch = ptu.from_numpy(batch_np)
+            update_info = agent.update(
+                batch["observations"],
+                batch["actions"],
+                batch["rewards"] * (1 if config.get("use_reward", False) else 0),
+                batch["next_observations"],
+                batch["dones"],
+                step,
+            )
+
         if epsilon is not None:
             update_info["epsilon"] = epsilon
 
@@ -107,12 +155,11 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
                 logger.log_scalar(np.max(ep_lens), "eval/ep_len_max", step)
                 logger.log_scalar(np.min(ep_lens), "eval/ep_len_min", step)
 
-        if step % args.visualize_interval == 0:
-            env_pointmass: Pointmass = env.unwrapped
-            observations = np.stack(recent_observations)
+        if step % args.visualize_interval == 0 and len(recent_observations) > 0:
+            observations_np = np.stack(recent_observations)
             recent_observations = []
             logger.log_figure(
-                visualize(env_pointmass, agent, observations),
+                visualize(env_pointmass, agent, observations_np),
                 "exploration_trajectories",
                 step,
                 "eval",
@@ -125,13 +172,13 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
         print("Saved dataset to", dataset_file)
 
     # Render final heatmap
-    fig = visualize(
-        env_pointmass, agent, replay_buffer.observations[: config["total_steps"]]
-    )
-    fig.suptitle("State coverage")
-    filename = os.path.join("exploration", f"{config['log_name']}.png")
-    fig.savefig(filename)
-    print("Saved final heatmap to", filename)
+    # fig = visualize(
+    #     env_pointmass, agent, replay_buffer.observations[: config["total_steps"]]
+    # )
+    # fig.suptitle("State coverage")
+    # filename = os.path.join("exploration", f"{config['log_name']}.png")
+    # fig.savefig(filename)
+    # print("Saved final heatmap to", filename)
 
 
 banner = """

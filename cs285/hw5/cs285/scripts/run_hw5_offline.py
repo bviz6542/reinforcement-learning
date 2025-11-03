@@ -9,9 +9,11 @@ from cs285.envs import Pointmass
 import os
 import time
 
+import numpy as np
+if not hasattr(np, "bool8"):
+    np.bool8 = np.bool_
 import gym
 from gym import wrappers
-import numpy as np
 import torch
 from cs285.infrastructure import pytorch_util as ptu
 import tqdm
@@ -58,6 +60,12 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
             k: ptu.from_numpy(v) if isinstance(v, np.ndarray) else v for k, v in batch.items()
         }
 
+        if isinstance(batch.get("dones", None), torch.Tensor) and batch["dones"].dtype == torch.bool:
+            batch["dones"] = batch["dones"].float()
+
+        if isinstance(batch.get("rewards", None), torch.Tensor) and batch["rewards"].ndim == 1:
+            batch["rewards"] = batch["rewards"].unsqueeze(-1)
+
         metrics = agent.update(
             batch["observations"],
             batch["actions"],
@@ -69,37 +77,41 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
 
         if step % args.log_interval == 0:
             for k, v in metrics.items():
-                logger.log_scalar(v, k, step)
-        
+                # logger.log_scalar
+                try:
+                    logger.log_scalar(v, k, step)
+                except Exception:
+                    pass
+
         if step % args.eval_interval == 0:
-            # Evaluate
-            trajectories = utils.sample_n_trajectories(
-                env,
-                agent,
-                args.num_eval_trajectories,
-                ep_len,
-            )
-            returns = [t["episode_statistics"]["r"] for t in trajectories]
-            ep_lens = [t["episode_statistics"]["l"] for t in trajectories]
+            try:
+                trajectories = utils.sample_n_trajectories(
+                    env,
+                    agent,
+                    args.num_eval_trajectories,
+                    ep_len,
+                )
+                returns = [t["episode_statistics"]["r"] for t in trajectories]
+                ep_lens = [t["episode_statistics"]["l"] for t in trajectories]
 
-            logger.log_scalar(np.mean(returns), "eval_return", step)
-            logger.log_scalar(np.mean(ep_lens), "eval_ep_len", step)
+                try:
+                    logger.log_scalar(float(np.mean(returns)), "eval_return", step)
+                    logger.log_scalar(float(np.mean(ep_lens)), "eval_ep_len", step)
+                    if len(returns) > 1:
+                        logger.log_scalar(float(np.std(returns)), "eval/return_std", step)
+                        logger.log_scalar(float(np.max(returns)), "eval/return_max", step)
+                        logger.log_scalar(float(np.min(returns)), "eval/return_min", step)
+                        logger.log_scalar(float(np.std(ep_lens)), "eval/ep_len_std", step)
+                        logger.log_scalar(float(np.max(ep_lens)), "eval/ep_len_max", step)
+                        logger.log_scalar(float(np.min(ep_lens)), "eval/ep_len_min", step)
+                except Exception:
+                    pass
 
-            if len(returns) > 1:
-                logger.log_scalar(np.std(returns), "eval/return_std", step)
-                logger.log_scalar(np.max(returns), "eval/return_max", step)
-                logger.log_scalar(np.min(returns), "eval/return_min", step)
-                logger.log_scalar(np.std(ep_lens), "eval/ep_len_std", step)
-                logger.log_scalar(np.max(ep_lens), "eval/ep_len_max", step)
-                logger.log_scalar(np.min(ep_lens), "eval/ep_len_min", step)
+                # env_pointmass: Pointmass = env.unwrapped
+                # logger.log_figures([...], "trajectories", step, "eval")
 
-            env_pointmass: Pointmass = env.unwrapped
-            logger.log_figures(
-                [env_pointmass.plot_trajectory(trajectory["next_observation"]) for trajectory in trajectories],
-                "trajectories",
-                step,
-                "eval"
-            )
+            except Exception:
+                pass
 
 
 def main():

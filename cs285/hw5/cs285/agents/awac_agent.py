@@ -32,21 +32,24 @@ class AWACAgent(DQNAgent):
     ):
         with torch.no_grad():
             # TODO(student): compute the actor distribution, then use it to compute E[Q(s, a)]
-            next_qa_values = ...
+            next_qa_values = self.target_critic(next_observations)
 
             # Use the actor to compute a critic backup
-
-            next_qs = ...
+            next_logits = self.actor(next_observations)
+            next_dist = torch.distributions.Categorical(logits=next_logits)
+            next_probs = next_dist.probs
+            next_qs = (next_probs * next_qa_values).sum(dim=-1)
 
             # TODO(student): Compute the TD target
-            target_values = ...
+            target_values = rewards.squeeze(-1) + (1.0 - dones.squeeze(-1)) * self.discount * next_qs
 
         
         # TODO(student): Compute Q(s, a) and loss similar to DQN
-        q_values = ...
+        qa_values = self.critic(observations)
+        q_values = qa_values.gather(1, actions.long().unsqueeze(1)).squeeze(1)
         assert q_values.shape == target_values.shape
 
-        loss = ...
+        loss = self.loss_fn(q_values, target_values)
 
         return (
             loss,
@@ -68,11 +71,17 @@ class AWACAgent(DQNAgent):
         action_dist: Optional[torch.distributions.Categorical] = None,
     ):
         # TODO(student): compute the advantage of the actions compared to E[Q(s, a)]
-        qa_values = ...
-        q_values = ...
-        values = ...
+        qa_values = self.critic(observations)
+        q_values = qa_values.gather(1, actions.long().unsqueeze(1)).squeeze(1)
 
-        advantages = ...
+        if action_dist is None:
+            logits = self.actor(observations)
+            action_dist = torch.distributions.Categorical(logits=logits)
+
+        probs = action_dist.probs
+        values = (probs * qa_values).sum(dim=-1)
+
+        advantages = q_values - values
         return advantages
 
     def update_actor(
@@ -81,7 +90,14 @@ class AWACAgent(DQNAgent):
         actions: torch.Tensor,
     ):
         # TODO(student): update the actor using AWAC
-        loss = ...
+        logits = self.actor(observations)
+        dist = torch.distributions.Categorical(logits=logits)
+
+        advantages = self.compute_advantage(observations, actions, dist).detach()
+        weights = torch.exp(advantages / self.temperature).clamp(max=100.0)
+
+        logp = dist.log_prob(actions.long())
+        loss = -(weights * logp).mean()
 
         self.actor_optimizer.zero_grad()
         loss.backward()
