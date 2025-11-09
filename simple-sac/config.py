@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
-    env_name: str = "Pendulum-v1"
+    env_name: str = "HalfCheetah-v4"
     seed: int = 1
     device: str = "cpu"
 
@@ -25,6 +25,9 @@ class Config:
     fixed_alpha: float = 0.2
 
     # Training
-    total_steps: int = 2_000
+    total_steps: int = 100_000
     eval_interval: int = 5_000
     eval_episodes: int = 5
+
+    # Video
+    video_interval: int = 20_000

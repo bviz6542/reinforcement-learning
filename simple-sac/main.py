@@ -1,3 +1,5 @@
+import os
+
 import gymnasium as gym
 import numpy as np
 import torch
@@ -5,6 +7,8 @@ from config import Config
 from util import set_seed
 from replay_buffer import ReplayBuffer
 from sac import SAC
+from video import record_episode
+
 
 def evaluate(env, agent: SAC, episodes=5):
     returns = []
@@ -64,19 +68,40 @@ def main():
                 batch = buf.sample(cfg.batch_size)
                 info = agent.update(batch, cfg)
 
-        # Log & Eval
+        # Log
         if t % 1000 == 0 and t >= cfg.start_steps:
             print(f"[step {t}] "
                   f"q_loss={info['q_loss']:.3f}  actor_loss={info['actor_loss']:.3f}  "
                   f"alpha={info['alpha']:.3f}  q_pi={info['q_pi']:.2f}")
 
+        # Eval
         if t % cfg.eval_interval == 0:
             mean_ret, std_ret = evaluate(test_env, agent, cfg.eval_episodes)
             print(f"[EVAL step {t}] return={mean_ret:.1f} ± {std_ret:.1f}")
 
+        # Video
+        if t % cfg.video_interval == 0:
+            # save a short deterministic rollout to MP4
+            video_dir = "videos"
+            os.makedirs(video_dir, exist_ok=True)
+            out_path = os.path.join(video_dir, f"{cfg.env_name.replace('-', '_')}_step_{t}.mp4")
+            ep_ret, nframes = record_episode(
+                agent, cfg.env_name, out_path,
+                steps=1000, deterministic=True, fps=30,
+                seed=cfg.seed + 123  # fixed seed for comparable videos
+            )
+            print(f"[VIDEO] saved {out_path}  frames={nframes}  ep_return={ep_ret:.1f}")
+
     mean_ret, std_ret = evaluate(test_env, agent, cfg.eval_episodes)
     print(f"FINAL EVAL: return={mean_ret:.1f} ± {std_ret:.1f}")
 
+    final_path = os.path.join("videos", f"{cfg.env_name.replace('-', '_')}_final.mp4")
+    ep_ret, nframes = record_episode(
+        agent, cfg.env_name, final_path,
+        steps=1000, deterministic=True, fps=30,
+        seed=cfg.seed + 456
+    )
+    print(f"[VIDEO] saved {final_path}  frames={nframes}  ep_return={ep_ret:.1f}")
 
 if __name__ == "__main__":
     main()
